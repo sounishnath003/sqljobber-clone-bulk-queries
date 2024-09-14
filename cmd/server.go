@@ -24,7 +24,13 @@ func NewServer(conf *ConfigOpts) *Server {
 // Implements the handlers as well and Middlewares for the echo.Echo server.
 func (s *Server) MustStart() {
 	e := ConfigureMiddlewares(echo.New())
-	e.Add("GET", "/api/healthy", handlers.HealthyHandler)
+
+	apiRoutes := e.Group("/api")
+	apiRoutes.Add("GET", "/healthy", handlers.HealthyHandler)
+
+	// Versioning V1 routes
+	v1Routes := e.Group("api/v1")
+	v1Routes.Add("GET", "/tasks", handlers.GetJobs)
 
 	// Go routine
 	go func() {
@@ -46,12 +52,14 @@ func (s *Server) MustStart() {
 // 4) Adds TraceID in the Response Data for the Future Tracking
 func ConfigureMiddlewares(e *echo.Echo) *echo.Echo {
 
+	// Inbuilt - Middlewares groupping addition
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"http://localhost:4200", "http://localhost:3000"},
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderContentSecurityPolicy, echo.HeaderAuthorization, echo.HeaderXForwardedFor},
 		AllowMethods: []string{"GET", "POST", "DELETE"},
 	}))
 
+	e.Use(middleware.AddTrailingSlash())
 	e.Use(middleware.Decompress())
 	e.Use(middleware.Logger())
 	e.Use(middleware.RequestID())
@@ -65,5 +73,18 @@ func ConfigureMiddlewares(e *echo.Echo) *echo.Echo {
 	}))
 	e.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStore(20)))
 
+	// Custom Middlewares
+	e.Use(TimingMiddleware)
+
 	return e
+}
+
+func TimingMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		start := time.Now()
+		err := next(c)
+		latency := time.Since(start).Seconds()
+		c.Response().Header().Set("X-Response-Time", fmt.Sprintf("%f seconds", latency))
+		return err
+	}
 }
