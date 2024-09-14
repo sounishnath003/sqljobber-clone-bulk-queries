@@ -1,28 +1,23 @@
 
-Appname=gooferr-$$(date +%Y%m%d)
-
 .PHONY: postgres
-postgres:
-	podman run -ti -p 5432:5432 \
+db:
+	podman run --rm -d -ti \
 		-e POSTGRES_USER=root \
 		-e POSTGRES_PASSWORD=root \
-		-e PGDATA=/var/lib/postgresql/data/pgdata \
-		-v ./postgres:/var/lib/postgresql/data \
-		--name pqdb \
-		postgres:15-alpine
+		-p 5432:5432 \
+		postgres:16-alpine
 
-.PHONY: createdb
-createdb:
-	podman exec -ti pqdb createdb --username=root --owner=root gochat
-	podman exec -ti psql
-
+.PHONY: install
+install:
+	go mod tidy
+	go mod download
+	go mod verify
 
 .PHONY: build
 build:
-	go build -o dist/$(Appname) cmd/*.go
-	ls -l dist
-
+	go build -ldflags "-s -w" -o dist/gooferr cmd/*.go
+	ls -lrth dist
 
 .PHONY: run
 run: build
-	dist/$(Appname) --race
+	./dist/gooferr
