@@ -2,4 +2,3 @@ postgres
 *.bin
 *.log
 .env
-dist
