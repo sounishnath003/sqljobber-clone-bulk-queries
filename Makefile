@@ -1,11 +1,9 @@
 
 .PHONY: postgres
-db:
-	podman run --rm -d -ti \
-		-e POSTGRES_USER=root \
-		-e POSTGRES_PASSWORD=root \
-		-p 5432:5432 \
-		postgres:16-alpine
+compose-up:
+	podman-compose ps
+	podman-compose down
+	podman-compose up --build
 
 .PHONY: install
 install:
