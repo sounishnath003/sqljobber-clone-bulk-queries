@@ -3,90 +3,66 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/google/uuid"
 	"github.com/sounishnath003/jobprocessor/internal/core"
-	"github.com/sounishnath003/jobprocessor/internal/handlers"
+	"github.com/sounishnath003/jobprocessor/internal/core/handlers"
 )
 
 type Server struct {
-	PORT int
+	Core *core.Core
 }
 
 func NewServer(co *core.Core) *Server {
 	return &Server{
-		PORT: co.Conf.PORT,
+		Core: co,
 	}
 }
 
 // MustStart - Initiates the server with panic. sets up with the provided Conf parameters from the arguments.
 // Implements the handlers as well and Middlewares for the echo.Echo server.
 func (s *Server) MustStart() {
-	e := ConfigureMiddlewares(echo.New())
+	// Create the API version and path prefix and group handler with /api/v1
+	srv := http.NewServeMux()
 
-	apiRoutes := e.Group("/api")
-	apiRoutes.Add("GET", "/healthy", handlers.HealthyHandler)
-
-	// Versioning V1 routes
-	v1Routes := e.Group("api/v1")
-	v1Routes.Add("GET", "/tasks", handlers.GetJobs)
+	// Define route endpoints
+	srv.HandleFunc("GET /healthy", handlers.HealthyHandler)
+	srv.HandleFunc("GET /api/v1/tasks", handlers.HandleGetTasksList)
 
 	// Go routine
 	go func() {
-		log.Printf("Api is up and running on http://localhost:%d\n", s.PORT)
+		log.Printf("API is up and running on http://localhost:%d\n", s.Core.Conf.PORT)
 	}()
 
 	// Starting the server
-	e.Logger.Fatal(e.Start(fmt.Sprintf(":%d", s.PORT)))
+	http.ListenAndServe(fmt.Sprintf(":%d", s.Core.Conf.PORT), ConfigureMiddlewares(srv))
 }
 
-// Implement the following middle for Echo server
-//
-// 1) Logging every request and response with Timing
-//
-// 2) Throws error if the Response of the output is More than 2 Seconds
-//
-// 3) Sends the Application/JSON as Content-Type Header
-//
-// 4) Adds TraceID in the Response Data for the Future Tracking
-func ConfigureMiddlewares(e *echo.Echo) *echo.Echo {
-
-	// Inbuilt - Middlewares groupping addition
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"http://localhost:4200", "http://localhost:3000"},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderContentSecurityPolicy, echo.HeaderAuthorization, echo.HeaderXForwardedFor},
-		AllowMethods: []string{"GET", "POST", "DELETE"},
-	}))
-
-	e.Use(middleware.AddTrailingSlash())
-	e.Use(middleware.Decompress())
-	e.Use(middleware.Logger())
-	e.Use(middleware.RequestID())
-	e.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
-		Skipper:      middleware.DefaultSkipper,
-		ErrorMessage: "Response is taking too long to execute. Please try again.",
-		OnTimeoutRouteErrorHandler: func(err error, c echo.Context) {
-			log.Println(c.Path())
-		},
-		Timeout: 5 * time.Second,
-	}))
-	e.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStore(20)))
-
-	// Custom Middlewares
-	e.Use(TimingMiddleware)
-
-	return e
+func ConfigureMiddlewares(srv *http.ServeMux) http.Handler {
+	return LoggerMiddleware(TraceIdMiddleware(srv))
 }
 
-func TimingMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
+func LoggerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		err := next(c)
-		latency := time.Since(start).Seconds()
-		c.Response().Header().Set("Content-Type", "application/json; charset=utf-8")
-		c.Response().Header().Set("X-Response-Time", fmt.Sprintf("%f seconds", latency))
-		return err
-	}
+		next.ServeHTTP(w, r)
+		log.Printf("Method=%s Path=%s RemoteIP=%s, Time=%s", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
+	})
+}
+func TraceIdMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		traceId := uuid.New().String()
+		w.Header().Add("X-Trace-Id", traceId)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func TimeTakenMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("Time taken: %s", time.Since(start))
+	})
 }

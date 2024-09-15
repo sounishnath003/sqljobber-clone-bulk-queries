@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"sync"
 	"time"
 
@@ -51,5 +52,19 @@ type Core struct {
 	resultBackends ResultBackends
 	mu             sync.RWMutex
 
-	q *tasqueue.Server
+	q     *tasqueue.Server
+	tasks Tasks
 }
+
+type Task struct {
+	Name          string         `json:"name"`
+	Queue         string         `json:"queue"`
+	Conc          int            `json:"concurrency"`
+	Stmt          *sql.Stmt      `json:"-"`
+	Raw           string         `json:"raw,omitempty"`
+	DBs           database.Pool  `json:"-"`
+	ResultBackend ResultBackends `json:"-"`
+}
+
+// Tasks represents a map of prepared SQL statements.
+type Tasks map[string]Task

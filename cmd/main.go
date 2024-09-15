@@ -48,7 +48,9 @@ func main() {
 	srv := NewServer(co)
 	go srv.MustStart()
 
+	// Setup an ctx background.
 	ctx := context.Background()
+
 	if err := co.Start(ctx, "worker-name", 5); err != nil {
 		panic(err)
 	}

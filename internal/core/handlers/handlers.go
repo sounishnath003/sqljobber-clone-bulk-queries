@@ -3,11 +3,9 @@ package handlers
 import (
 	"net/http"
 	"time"
-
-	"github.com/labstack/echo/v4"
 )
 
-func HealthyHandler(ctx echo.Context) error {
+func HealthyHandler(w http.ResponseWriter, r *http.Request) {
 	generalInfo := map[string]interface{}{
 		"author":         "Sounish Nath",
 		"appname":        "jobprocessor",
@@ -20,5 +18,13 @@ func HealthyHandler(ctx echo.Context) error {
 		"hostname":     "sounish-macbook-air-m1",
 	}
 	resp := NewApiResponse(http.StatusOK, nil, "API is running. Its healthly", generalInfo)
-	return ctx.JSON(http.StatusOK, resp)
+	SendApiResponse(w, http.StatusOK, resp)
+}
+
+func HandleGetTasksList(w http.ResponseWriter, r *http.Request) {
+	// tasks := co.GetTasks()
+	tasks := map[string]interface{}{"co": "context.admin"}
+
+	resp := NewApiResponse(http.StatusOK, nil, "get all jobs", tasks)
+	SendApiResponse(w, http.StatusOK, resp)
 }

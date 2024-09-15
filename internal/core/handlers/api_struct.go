@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,4 +33,10 @@ func NewApiResponse(status int, err error, message string, data interface{}) *Ap
 	}
 
 	return defaultResp
+}
+
+func SendApiResponse(w http.ResponseWriter, status int, data *ApiResponse) error {
+	w.Header().Add("Content-Type", "application/json, charset=utf-8")
+	w.WriteHeader(status)
+	return json.NewEncoder(w).Encode(data)
 }

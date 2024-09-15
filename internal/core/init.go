@@ -110,6 +110,12 @@ func (co *Core) Start(ctx context.Context, workerName string, workerConcurrency 
 	co.q = qs
 	qs.Start(ctx)
 
+	func() {
+		for {
+
+		}
+	}()
+
 	return nil
 }
 
@@ -132,4 +138,9 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 	// TODO: Register every SQL tasks in the queue systems as a job function.
 
 	return qs, nil
+}
+
+// GetTasks returns the registered tasks map.
+func (co *Core) GetTasks() Tasks {
+	return co.tasks
 }
