@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 	"time"
+
+	"github.com/sounishnath003/jobprocessor/internal/core"
 )
 
 func HealthyHandler(w http.ResponseWriter, r *http.Request) {
@@ -22,8 +24,11 @@ func HealthyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleGetTasksList(w http.ResponseWriter, r *http.Request) {
-	// tasks := co.GetTasks()
-	tasks := map[string]interface{}{"co": "context.admin"}
+	var (
+		co = r.Context().Value("core").(*core.Core)
+	)
+
+	tasks := co.GetTasks()
 
 	resp := NewApiResponse(http.StatusOK, nil, "get all jobs", tasks)
 	SendApiResponse(w, http.StatusOK, resp)

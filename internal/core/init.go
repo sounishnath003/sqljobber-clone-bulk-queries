@@ -142,5 +142,18 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 
 // GetTasks returns the registered tasks map.
 func (co *Core) GetTasks() Tasks {
-	return co.tasks
+	return Tasks{
+		"task-01": Task{
+			Name:  "taskname-01",
+			Queue: "default-queue",
+			Conc:  5,
+			Raw:   "SELECT name, SUM(profit) FROM public.t_transactions WHERE userid=$1 GROUP BY userid;",
+		},
+		"task-02": Task{
+			Name:  "taskname-02",
+			Queue: "default-queue",
+			Conc:  5,
+			Raw:   "SELECT name, SUM(profit) FROM public.t_transactions WHERE userid=$1 GROUP BY userid;",
+		},
+	}
 }
