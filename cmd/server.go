@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/sounishnath003/jobprocessor/internal/core"
 	"github.com/sounishnath003/jobprocessor/internal/handlers"
 )
 
@@ -14,9 +15,9 @@ type Server struct {
 	PORT int
 }
 
-func NewServer(conf *ConfigOpts) *Server {
+func NewServer(co *core.Core) *Server {
 	return &Server{
-		PORT: conf.PORT,
+		PORT: co.Conf.PORT,
 	}
 }
 
@@ -84,6 +85,7 @@ func TimingMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		start := time.Now()
 		err := next(c)
 		latency := time.Since(start).Seconds()
+		c.Response().Header().Set("Content-Type", "application/json; charset=utf-8")
 		c.Response().Header().Set("X-Response-Time", fmt.Sprintf("%f seconds", latency))
 		return err
 	}
