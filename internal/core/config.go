@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -54,6 +55,7 @@ type Core struct {
 
 	q     *tasqueue.Server
 	tasks Tasks
+	lo    *slog.Logger
 }
 
 type Task struct {

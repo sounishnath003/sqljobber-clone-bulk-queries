@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"log/slog"
 	"path"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/knadh/goyesql/v2"
 
 	"github.com/sounishnath003/jobprocessor/internal/database"
+	"github.com/sounishnath003/jobprocessor/internal/models"
 )
 
 // InitCore - helps to initialize the Core dependendies of the Jobprocessor service
@@ -27,6 +27,8 @@ import (
 //
 // Returns *Core, error
 func InitCore(conf ConfigOpts) (*Core, error) {
+
+	lo := slog.Default()
 
 	// Connect to source DBs
 	srcDBs := []database.Config{
@@ -37,7 +39,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 	// to fetch data from the the databases
 	srcPools, err := database.New(srcDBs)
 	if err != nil {
-		log.Println("an error occured while connecting the source DBs", err)
+		lo.Info("an error occured while connecting the source DBs", err)
 		return nil, err
 	}
 
@@ -51,7 +53,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 
 	resultPools, err := database.New(resultDBs)
 	if err != nil {
-		log.Println("an error occured while connecting the source DBs", err)
+		lo.Info("an error occured while connecting the source DBs", err)
 		return nil, err
 	}
 
@@ -81,10 +83,10 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		DialTimeout:  conf.BrokerQueue.DialTimeout,
 		ReadTimeout:  conf.BrokerQueue.ReadTimeout,
 		WriteTimeout: conf.BrokerQueue.WriteTimeout,
-	}, &slog.Logger{})
+	}, lo)
 
 	// Initialize the Redis Result State backend.
-	rResult := rredis.New(rredis.Options{}, &slog.Logger{})
+	rResult := rredis.New(rredis.Options{}, lo)
 
 	co := &Core{
 		Conf:           conf,
@@ -92,6 +94,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		resultBackends: backends,
 		mu:             sync.RWMutex{},
 		tasks:          make(Tasks),
+		lo:             lo,
 		Opts: Options{
 			DefaultQueue:            "test",
 			DefaultGroupConcurrency: 5,
@@ -105,8 +108,8 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		return nil, fmt.Errorf("error loading tasks: %w", err)
 	}
 
-	log.Printf("core.Conf: %v\n", co.Conf)
-	log.Printf("core.Opts: %v\n", co.Opts)
+	lo.Info("core.Conf:", slog.Any("conf", co.Conf))
+	lo.Info("core.Opts:", slog.Any("opt", co.Opts))
 
 	return co, nil
 }
@@ -139,7 +142,7 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 	qs, err := tasqueue.NewServer(tasqueue.ServerOpts{
 		Broker:  co.Opts.Broker,
 		Results: co.Opts.Results,
-		Logger:  &slog.JSONHandler{},
+		Logger:  co.lo.Handler(),
 	})
 
 	if err != nil {
@@ -156,7 +159,7 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 // LoadTasks loads SQL queries from all the *.sql files in a given directory
 func (co *Core) LoadTasks(dirs []string) error {
 	for _, d := range dirs {
-		log.Printf("loading SQL queries from directory=%s\n", d)
+		co.lo.Info("loading SQL queries from directory", d, "")
 		tasks, err := co.loadTasks(d)
 		if err != nil {
 			return err
@@ -169,7 +172,7 @@ func (co *Core) LoadTasks(dirs []string) error {
 
 			// Add the task q into co.tasks[t]
 			co.tasks[t] = q
-			log.Printf("loaded tasks (SQL queries) count=%d, directory=%s", len(tasks), d)
+			co.lo.Info("loaded tasks (SQL queries)", slog.Int("count", len(tasks)), "directory", d) // Updated to use slog.Int
 		}
 	}
 
@@ -229,7 +232,7 @@ func (co *Core) loadTasks(dir string) (Tasks, error) {
 
 			conc := co.Opts.DefaultGroupConcurrency
 
-			log.Printf("loading task: task=%s, type=%s, db=%+v, resDB=%+v, queue=%s\n", name, typ, srcDBs, resDBs, queue)
+			co.lo.Info("loading task:", name, "type", typ, "queue", queue, "details") // Added "details" as a final value
 
 			tasks[name] = Task{
 				Name:          name,
@@ -251,4 +254,18 @@ func (co *Core) loadTasks(dir string) (Tasks, error) {
 // GetTasks returns the registered tasks map.
 func (co *Core) GetTasks() Tasks {
 	return co.tasks
+}
+
+func (co *Core) GetJobStatus(jobID string) (models.JobStatusResp, error) {
+
+	ctx := context.Background()
+	_, err := co.q.GetJob(ctx, jobID)
+	if err == tasqueue.ErrNotFound {
+		return models.JobStatusResp{}, fmt.Errorf("job not found")
+	} else if err != nil {
+		co.lo.Info("error fetching job status", "error", err)
+		return models.JobStatusResp{}, err
+	}
+
+	return models.JobStatusResp{}, nil
 }

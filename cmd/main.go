@@ -45,11 +45,11 @@ func main() {
 		panic(err)
 	}
 
-	srv := NewServer(co)
-	go srv.MustStart()
-
 	// Setup an ctx background.
 	ctx := context.Background()
+
+	srv := NewServer(co)
+	go srv.MustStart()
 
 	if err := co.Start(ctx, "worker-name", 5); err != nil {
 		panic(err)

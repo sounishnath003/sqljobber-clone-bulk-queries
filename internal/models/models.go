@@ -24,3 +24,6 @@ type ResultBackend interface {
 // ResultSet represents the set of results from an individual job that's executed.
 type ResultSet interface {
 }
+
+type JobStatusResp struct {
+}

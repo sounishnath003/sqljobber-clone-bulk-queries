@@ -35,5 +35,6 @@ export default function () {
         JSON.parse(res.body)["status"] == 200,
     });
   });
+
   sleep(1);
 }

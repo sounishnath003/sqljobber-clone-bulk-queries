@@ -33,6 +33,7 @@ func (s *Server) MustStart() {
 	// Define route endpoints
 	srv.HandleFunc("GET /healthy", handlers.HealthyHandler)
 	srv.HandleFunc("GET /api/v1/tasks", handlers.HandleGetTasksList)
+	srv.HandleFunc("GET /api/v1/jobs/{jobID}", handlers.HandleGetJobStatus)
 
 	// Go routine
 	// So that's its not blocking

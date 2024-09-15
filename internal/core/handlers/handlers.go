@@ -31,6 +31,23 @@ func HandleGetTasksList(w http.ResponseWriter, r *http.Request) {
 
 	tasks := co.GetTasks()
 
-	resp := NewApiResponse(http.StatusOK, nil, "lists of tasks that you can submit the job", tasks)
+	resp := NewApiResponse(http.StatusOK, nil, "lists of available tasks to submit as job", tasks)
 	SendApiResponse(w, http.StatusOK, resp)
+}
+
+func HandleGetJobStatus(w http.ResponseWriter, r *http.Request) {
+	var (
+		co    = r.Context().Value("core").(*core.Core)
+		jobID = r.PathValue("jobID")
+	)
+
+	out, err := co.GetJobStatus(jobID)
+	if err != nil {
+		SendApiResponse(w, http.StatusNotFound, NewApiResponse(http.StatusNotFound, err, "could not getjob status by jobID", nil))
+		return
+	}
+
+	resp := NewApiResponse(http.StatusOK, nil, "jobstatus fetched successfully", out)
+	SendApiResponse(w, http.StatusOK, resp)
+
 }
