@@ -1,10 +1,16 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/kalbhor/tasqueue/v2"
+	bredis "github.com/kalbhor/tasqueue/v2/brokers/redis"
+	rredis "github.com/kalbhor/tasqueue/v2/results/redis"
 
 	"github.com/sounishnath003/jobprocessor/internal/database"
 )
@@ -59,6 +65,21 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		backends[name] = backend
 	}
 
+	// Initialize the Redis Broker backend.
+	rBroker := bredis.New(bredis.Options{
+		PollPeriod:   bredis.DefaultPollPeriod,
+		Addrs:        conf.BrokerQueue.Addrs,
+		Password:     conf.BrokerQueue.Password,
+		DB:           conf.BrokerQueue.DB,
+		MinIdleConns: conf.BrokerQueue.MinIdleConns,
+		DialTimeout:  conf.BrokerQueue.DialTimeout,
+		ReadTimeout:  conf.BrokerQueue.ReadTimeout,
+		WriteTimeout: conf.BrokerQueue.WriteTimeout,
+	}, &slog.Logger{})
+
+	// Initialize the Redis Result State backend.
+	rResult := rredis.New(rredis.Options{}, &slog.Logger{})
+
 	co := &Core{
 		Conf:           conf,
 		sourceDBs:      srcPools,
@@ -68,6 +89,8 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 			DefaultQueue:            "default-queue",
 			DefaultGroupConcurrency: 10,
 			DefaultJobTTL:           10 * time.Second,
+			Broker:                  rBroker,
+			Results:                 rResult,
 		},
 	}
 
@@ -75,4 +98,38 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 	log.Printf("core.Opts: %v\n", co.Opts)
 
 	return co, nil
+}
+
+// Start - a fully blocking worker initializers. This must only calls after all initializations are done.
+func (co *Core) Start(ctx context.Context, workerName string, workerConcurrency int) error {
+	qs, err := co.initQueue()
+	if err != nil {
+		return err
+	}
+
+	co.q = qs
+	qs.Start(ctx)
+
+	return nil
+}
+
+// initQueue creates and returns a distributed queue system (Tasqueue) and registers
+// Tasks (SQL queries) to be executed. The queue system uses a broker (eg: Kafka) and stores
+// job states in a state store (eg: Redis)
+func (co *Core) initQueue() (*tasqueue.Server, error) {
+	var err error
+
+	qs, err := tasqueue.NewServer(tasqueue.ServerOpts{
+		Broker:  co.Opts.Broker,
+		Results: co.Opts.Results,
+		Logger:  &slog.JSONHandler{},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Register every SQL tasks in the queue systems as a job function.
+
+	return qs, nil
 }
