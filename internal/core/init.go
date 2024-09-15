@@ -2,15 +2,21 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/kalbhor/tasqueue/v2"
 	bredis "github.com/kalbhor/tasqueue/v2/brokers/redis"
 	rredis "github.com/kalbhor/tasqueue/v2/results/redis"
+
+	"github.com/knadh/goyesql/v2"
 
 	"github.com/sounishnath003/jobprocessor/internal/database"
 )
@@ -85,13 +91,18 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		sourceDBs:      srcPools,
 		resultBackends: backends,
 		mu:             sync.RWMutex{},
+		tasks:          make(Tasks),
 		Opts: Options{
-			DefaultQueue:            "default-queue",
-			DefaultGroupConcurrency: 10,
-			DefaultJobTTL:           10 * time.Second,
+			DefaultQueue:            "test",
+			DefaultGroupConcurrency: 5,
+			DefaultJobTTL:           5 * time.Second,
 			Broker:                  rBroker,
 			Results:                 rResult,
 		},
+	}
+
+	if err := co.LoadTasks([]string{"sql"}); err != nil {
+		return nil, fmt.Errorf("error loading tasks: %w", err)
 	}
 
 	log.Printf("core.Conf: %v\n", co.Conf)
@@ -140,20 +151,104 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 	return qs, nil
 }
 
+// ----------- Tasks functionalities. -------------
+
+// LoadTasks loads SQL queries from all the *.sql files in a given directory
+func (co *Core) LoadTasks(dirs []string) error {
+	for _, d := range dirs {
+		log.Printf("loading SQL queries from directory=%s\n", d)
+		tasks, err := co.loadTasks(d)
+		if err != nil {
+			return err
+		}
+
+		for t, q := range tasks {
+			if _, ok := co.tasks[t]; ok {
+				return fmt.Errorf("duplicate task %s", t)
+			}
+
+			// Add the task q into co.tasks[t]
+			co.tasks[t] = q
+			log.Printf("loaded tasks (SQL queries) count=%d, directory=%s", len(tasks), d)
+		}
+	}
+
+	return nil
+}
+
+func (co *Core) loadTasks(dir string) (Tasks, error) {
+	// Discovers .sql files.
+	files, err := filepath.Glob(path.Join(dir, "*.sql"))
+	if err != nil {
+		return nil, fmt.Errorf("unable to read SQL files directory %s : %w", dir, err)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("NO SQL files present directory %s : %w", dir, err)
+	}
+
+	// Parse all discovered SQL files.
+	tasks := make(Tasks)
+	for _, f := range files {
+		q := goyesql.MustParseFile(f)
+
+		for name, s := range q {
+			var (
+				stmt   *sql.Stmt
+				srcDBs database.Pool
+				resDBs ResultBackends
+			)
+
+			// Query already exists.
+			if _, ok := tasks[string(name)]; ok {
+				return nil, fmt.Errorf("duplicate query %s (%s)", name, f)
+			}
+
+			srcDBs = co.sourceDBs
+			resDBs = co.resultBackends
+
+			// Prepare the statement?
+			typ := ""
+			if _, ok := s.Tags["raw"]; ok {
+				typ = "raw"
+			} else {
+				// Prepare the statement against all tagged DBs just to be sure.
+				typ = "prepared"
+				for _, db := range srcDBs {
+					_, err := db.Prepare(s.Query)
+					if err != nil {
+						return nil, fmt.Errorf("error preparing SQL query %s: %v", name, err)
+					}
+				}
+			}
+
+			// Is there a queue?
+			queue := co.Opts.DefaultQueue
+			if v, ok := s.Tags["queue"]; ok {
+				queue = strings.TrimSpace(v)
+			}
+
+			conc := co.Opts.DefaultGroupConcurrency
+
+			log.Printf("loading task: task=%s, type=%s, db=%+v, resDB=%+v, queue=%s\n", name, typ, srcDBs, resDBs, queue)
+
+			tasks[name] = Task{
+				Name:          name,
+				Queue:         queue,
+				Conc:          conc,
+				Stmt:          stmt,
+				Raw:           s.Query,
+				DBs:           srcDBs,
+				ResultBackend: resDBs,
+			}
+		}
+	}
+
+	return tasks, nil
+}
+
+// ----------- API Handlers Dependent Jobs functionalities. -------------
+
 // GetTasks returns the registered tasks map.
 func (co *Core) GetTasks() Tasks {
-	return Tasks{
-		"task-01": Task{
-			Name:  "taskname-01",
-			Queue: "default-queue",
-			Conc:  5,
-			Raw:   "SELECT name, SUM(profit) FROM public.t_transactions WHERE userid=$1 GROUP BY userid;",
-		},
-		"task-02": Task{
-			Name:  "taskname-02",
-			Queue: "default-queue",
-			Conc:  5,
-			Raw:   "SELECT name, SUM(profit) FROM public.t_transactions WHERE userid=$1 GROUP BY userid;",
-		},
-	}
+	return co.tasks
 }

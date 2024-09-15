@@ -12,10 +12,12 @@ import (
 	"github.com/sounishnath003/jobprocessor/internal/core/handlers"
 )
 
+// Server - struct for the initlization of the http.Server.
 type Server struct {
 	Core *core.Core
 }
 
+// NewServer - returns the instantianited server construct.
 func NewServer(co *core.Core) *Server {
 	return &Server{
 		Core: co,

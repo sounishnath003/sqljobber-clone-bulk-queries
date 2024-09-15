@@ -4,8 +4,9 @@ go 1.23.1
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/mux v1.8.1
 	github.com/kalbhor/tasqueue/v2 v2.2.1
+	github.com/knadh/goyesql v2.0.0+incompatible
+	github.com/knadh/goyesql/v2 v2.2.0
 	github.com/lib/pq v1.10.9
 )
 

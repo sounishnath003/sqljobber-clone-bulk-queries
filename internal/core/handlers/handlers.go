@@ -23,6 +23,7 @@ func HealthyHandler(w http.ResponseWriter, r *http.Request) {
 	SendApiResponse(w, http.StatusOK, resp)
 }
 
+// HandleGetTasksList returns the core.Core Tasks lists jobs supported
 func HandleGetTasksList(w http.ResponseWriter, r *http.Request) {
 	var (
 		co = r.Context().Value("core").(*core.Core)
@@ -30,6 +31,6 @@ func HandleGetTasksList(w http.ResponseWriter, r *http.Request) {
 
 	tasks := co.GetTasks()
 
-	resp := NewApiResponse(http.StatusOK, nil, "get all jobs", tasks)
+	resp := NewApiResponse(http.StatusOK, nil, "lists of tasks that you can submit the job", tasks)
 	SendApiResponse(w, http.StatusOK, resp)
 }
