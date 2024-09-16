@@ -49,5 +49,21 @@ func HandleGetJobStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp := NewApiResponse(http.StatusOK, nil, "jobstatus fetched successfully", out)
 	SendApiResponse(w, http.StatusOK, resp)
+}
 
+func HandleGetPendingJobs(w http.ResponseWriter, r *http.Request) {
+	var (
+		co    = r.Context().Value("core").(*core.Core)
+		queue = r.PathValue("queue")
+	)
+
+	out, err := co.GetPendingJobs(queue)
+	if err != nil {
+		SendApiResponse(w, http.StatusInternalServerError, NewApiResponse(http.StatusInternalServerError, err, "error fetching pending jobs", nil))
+		return
+	}
+
+	resp := NewApiResponse(http.StatusOK, nil, "pending jobs information has been fetched", out)
+
+	SendApiResponse(w, http.StatusOK, resp)
 }

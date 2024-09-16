@@ -34,6 +34,7 @@ func (s *Server) MustStart() {
 	srv.HandleFunc("GET /healthy", handlers.HealthyHandler)
 	srv.HandleFunc("GET /api/v1/tasks", handlers.HandleGetTasksList)
 	srv.HandleFunc("GET /api/v1/jobs/{jobID}", handlers.HandleGetJobStatus)
+	srv.HandleFunc("GET /api/v1/jobs/queue/{queue}", handlers.HandleGetPendingJobs)
 
 	// Go routine
 	// So that's its not blocking

@@ -25,5 +25,10 @@ type ResultBackend interface {
 type ResultSet interface {
 }
 
+// JobStatusResp - sends the REST response as a JOB status response
 type JobStatusResp struct {
+	JobID string `json:"job_id"`
+	State string `json:"state"`
+	Count int    `json:"count"`
+	Error string `json:"error"`
 }

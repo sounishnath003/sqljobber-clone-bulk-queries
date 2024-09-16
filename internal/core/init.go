@@ -3,10 +3,12 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -259,7 +261,7 @@ func (co *Core) GetTasks() Tasks {
 func (co *Core) GetJobStatus(jobID string) (models.JobStatusResp, error) {
 
 	ctx := context.Background()
-	_, err := co.q.GetJob(ctx, jobID)
+	out, err := co.q.GetJob(ctx, jobID)
 	if err == tasqueue.ErrNotFound {
 		return models.JobStatusResp{}, fmt.Errorf("job not found")
 	} else if err != nil {
@@ -267,5 +269,69 @@ func (co *Core) GetJobStatus(jobID string) (models.JobStatusResp, error) {
 		return models.JobStatusResp{}, err
 	}
 
-	return models.JobStatusResp{}, nil
+	// Try fetcing the job's result and ignore in case.
+	// The result is not found (job could be in processing)
+	// Read tasqueue documentation.
+	res, err := co.q.GetResult(ctx, jobID)
+	if err != nil && !errors.Is(err, tasqueue.ErrNotFound) {
+		co.lo.Error("error fetching jobID results", "error", err)
+		return models.JobStatusResp{}, err
+	}
+
+	var rowCount int
+	if string(res) != "" {
+		rowCount, err = strconv.Atoi(string(res))
+		if err != nil {
+			co.lo.Error("error converting row count to int", "error", err)
+			return models.JobStatusResp{}, err
+		}
+	}
+
+	state, err := getState(out.Status)
+	if err != nil {
+		co.lo.Error("error fetching job status mapping", "error", err)
+		return models.JobStatusResp{}, err
+	}
+
+	return models.JobStatusResp{
+		JobID: out.ID,
+		State: state,
+		Error: out.PrevErr,
+		Count: rowCount,
+	}, nil
+}
+
+// GetPendingJobs returns jobs pending execution.
+func (co *Core) GetPendingJobs(queue string) ([]tasqueue.JobMessage, error) {
+	out, err := co.q.GetPending(context.Background(), queue)
+	if err != nil {
+		co.lo.Error("error fetching pending jobs", "queue", queue, "error", err)
+		return nil, err
+	}
+
+	jLen := len(out)
+	for i := 0; i < jLen; i++ {
+		out[i], out[jLen-i-1] = out[jLen-i-1], out[i]
+	}
+
+	return out, nil
+}
+
+// getState helps keep compatibility between different status conventions
+// of the job servers (tasqueue/machinery).
+func getState(st string) (string, error) {
+	switch st {
+	case tasqueue.StatusStarted:
+		return models.StatusPending, nil
+	case tasqueue.StatusProcessing:
+		return models.StatusStarted, nil
+	case tasqueue.StatusFailed:
+		return models.StatusFailure, nil
+	case tasqueue.StatusDone:
+		return models.StatusSuccess, nil
+	case tasqueue.StatusRetrying:
+		return models.StatusRetry, nil
+	}
+
+	return "", fmt.Errorf("invalid status not found in mapping")
 }
