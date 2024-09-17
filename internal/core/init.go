@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
+	uuid "github.com/gofrs/uuid/v5"
 	"github.com/kalbhor/tasqueue/v2"
 	bredis "github.com/kalbhor/tasqueue/v2/brokers/redis"
 	rredis "github.com/kalbhor/tasqueue/v2/results/redis"
+	"github.com/vmihailenco/msgpack"
 
 	"github.com/knadh/goyesql/v2"
 
@@ -96,6 +98,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 		resultBackends: backends,
 		mu:             sync.RWMutex{},
 		tasks:          make(Tasks),
+		jobCtx:         make(map[string]context.CancelFunc),
 		lo:             lo,
 		Opts: Options{
 			DefaultQueue:            "test",
@@ -152,8 +155,97 @@ func (co *Core) initQueue() (*tasqueue.Server, error) {
 	}
 
 	// TODO: Register every SQL tasks in the queue systems as a job function.
+	for name := range co.tasks {
+		query := co.tasks[name]
+		err := qs.RegisterTask(string(name), func(b []byte, jctx tasqueue.JobCtx) error {
+			if _, err := qs.GetJob(jctx, jctx.Meta.ID); err != nil {
+				return err
+			}
+
+			var args taskMeta
+			if err := msgpack.Unmarshal(b, &args); err != nil {
+				return fmt.Errorf("could not unmarshal args: %w", err)
+			}
+
+			count, err := co.execJob(jctx.Meta.ID, name, args.DB, time.Duration(args.TTL)*time.Second, args.Args, query)
+			if err != nil {
+				return fmt.Errorf("could not execute the job: %w", err)
+			}
+
+			return jctx.Save([]byte(strconv.Itoa(int(count))))
+		}, tasqueue.TaskOpts{
+			Concurrency: uint32(query.Conc),
+			Queue:       query.Queue,
+		})
+
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return qs, nil
+}
+
+// execJob executes an SQL statement job and inserts the results into the result backend.
+func (co *Core) execJob(jobID, taskName, dbName string, ttl time.Duration, args []interface{}, task Task) (int64, error) {
+	// If the job is deleted, stop.
+	if _, err := co.GetJobStatus(jobID); err != nil {
+		return 0, errors.New("job was cancelled")
+	}
+
+	// Execute the query.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+
+		co.mu.Lock()
+		delete(co.jobCtx, jobID)
+		co.mu.Unlock()
+	}()
+
+	co.mu.Lock()
+	co.jobCtx[jobID] = cancel
+	co.mu.Unlock()
+
+	var (
+		rows *sql.Rows
+		db   *sql.DB
+		err  error
+	)
+
+	if task.Stmt != nil {
+		// Prepared query.
+		rows, err := task.Stmt.QueryContext(ctx, args...)
+		if err != nil {
+			return 0, fmt.Errorf("query preparation failed: %w", err)
+		}
+	} else {
+		if dbName != "" {
+			// Specific DB.
+			d, err := task.DBs.Get(dbName)
+			if err != nil {
+				return 0, fmt.Errorf("task execution failed : %w", err)
+			}
+			db = d
+		} else {
+			// Random DB as NO DB provided to run the query?
+			return 0, fmt.Errorf("database is not specified %w", err)
+		}
+	}
+
+	rows, err := db.QueryContext(ctx, task.Raw, args...)
+	if err != nil {
+		if err == context.Canceled {
+			return 0, fmt.Errorf("job was cancelled : %w", err)
+		}
+
+		return 0, fmt.Errorf("task execution %s failed : %w", taskName, err)
+	}
+
+	defer rows.Close()
+
+	// Write the results into result backend.
+	return co.writeResults(jobID, task, ttl, rows)
 }
 
 // ----------- Tasks functionalities. -------------
@@ -251,11 +343,110 @@ func (co *Core) loadTasks(dir string) (Tasks, error) {
 	return tasks, nil
 }
 
+// makeJob creates and returns a tasqueue (tasqueue.Job{}) from the given job params.
+func (co *Core) makeJob(j models.JobReq, taskName string) (tasqueue.Job, error) {
+	// Find the taskName is present or not.
+	task, ok := co.tasks[taskName]
+	if !ok {
+		return tasqueue.Job{}, fmt.Errorf("uncognized task: %s", taskName)
+	}
+
+	// Check if a JOB with same ID already running.
+	msg, err := co.q.GetJob(context.Background(), j.JobID)
+	if err != nil {
+		return tasqueue.Job{}, fmt.Errorf("error fetching job status (id='%s')", j.JobID)
+	}
+	if msg.Status == tasqueue.StatusProcessing || msg.Status == tasqueue.StatusRetrying {
+		return tasqueue.Job{}, fmt.Errorf("job '%s' is already running", j.JobID)
+	}
+
+	// If there's no job_id, we generate one. This is because
+	// the ID Machinery generates is not made available inside the
+	// actual task. So, we generate the ID and pass it as an argument
+	// to the task itself.
+	if j.JobID == "" {
+		uid, err := uuid.NewV4()
+		if err != nil {
+			return tasqueue.Job{}, fmt.Errorf("error generating uuid: %v", err)
+		}
+		j.JobID = fmt.Sprintf("job_%v", uid.String())
+	}
+
+	ttl := co.Opts.DefaultJobTTL
+	if j.TTL > 0 {
+		ttl = time.Duration(j.TTL) * time.Second
+	}
+
+	var eta time.Time
+	if j.ETA != "" {
+		e, err := time.Parse("2006-01-02 15:04:05", j.ETA)
+		if err != nil {
+			return tasqueue.Job{}, fmt.Errorf("error parsing ETA: %v", err)
+		}
+
+		eta = e
+	}
+
+	// If there's no queue in the request, use the one attached to the task,
+	// if there's any (Machinery will use the default queue otherwise).
+	if j.Queue == "" {
+		j.Queue = task.Queue
+	}
+
+	var args = make([]interface{}, len(j.Args))
+	for i := range j.Args {
+		args[i] = j.Args[i]
+	}
+
+	b, err := msgpack.Marshal(taskMeta{
+		Args: args,
+		DB:   j.DB,
+		TTL:  int(ttl),
+	})
+	if err != nil {
+		return tasqueue.Job{}, err
+	}
+
+	return tasqueue.NewJob(taskName, b, tasqueue.JobOpts{
+		ID:         j.JobID,
+		Queue:      j.Queue,
+		MaxRetries: uint32(j.Retries),
+		ETA:        eta,
+	})
+}
+
+type taskMeta struct {
+	Args []interface{} `json:"args"`
+	DB   string        `json:"db"`
+	TTL  int           `json:"ttl"`
+}
+
 // ----------- API Handlers Dependent Jobs functionalities. -------------
 
 // GetTasks returns the registered tasks map.
 func (co *Core) GetTasks() Tasks {
 	return co.tasks
+}
+
+func (co *Core) NewJob(j models.JobReq, taskName string) (models.JobResp, error) {
+	sig, err := co.makeJob(j, taskName)
+	if err != nil {
+		return models.JobResp{}, err
+	}
+
+	// Create job.
+	uuid, err := co.q.Enqueue(context.Background(), sig)
+	if err != nil {
+		return models.JobResp{}, err
+	}
+
+	return models.JobResp{
+		JobID:    uuid,
+		TaskName: sig.Task,
+		Queue:    sig.Opts.Queue,
+		Retries:  int(sig.Opts.MaxRetries),
+		ETA:      &sig.Opts.ETA,
+	}, nil
 }
 
 func (co *Core) GetJobStatus(jobID string) (models.JobStatusResp, error) {

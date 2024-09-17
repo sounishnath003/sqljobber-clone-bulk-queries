@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,7 @@ func (s *Server) MustStart() {
 	// Define route endpoints
 	srv.HandleFunc("GET /healthy", handlers.HealthyHandler)
 	srv.HandleFunc("GET /api/v1/tasks", handlers.HandleGetTasksList)
+	srv.HandleFunc("POST /api/v1/tasks/{taskName}/jobs", handlers.HandlePostJob)
 	srv.HandleFunc("GET /api/v1/jobs/{jobID}", handlers.HandleGetJobStatus)
 	srv.HandleFunc("GET /api/v1/jobs/queue/{queue}", handlers.HandleGetPendingJobs)
 
@@ -42,8 +44,8 @@ func (s *Server) MustStart() {
 	go func() {
 		log.Printf("API is up and running on http://localhost:%d\n", s.Core.Conf.PORT)
 		http.ListenAndServe(fmt.Sprintf(":%d", s.Core.Conf.PORT), ConfigureMiddlewares(srv, s.Core))
+		os.Exit(0)
 	}()
-
 }
 
 func ConfigureMiddlewares(srv *http.ServeMux, co *core.Core) http.Handler {

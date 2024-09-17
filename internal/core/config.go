@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"sync"
@@ -53,9 +54,10 @@ type Core struct {
 	resultBackends ResultBackends
 	mu             sync.RWMutex
 
-	q     *tasqueue.Server
-	tasks Tasks
-	lo    *slog.Logger
+	q      *tasqueue.Server
+	tasks  Tasks
+	jobCtx map[string]context.CancelFunc
+	lo     *slog.Logger
 }
 
 type Task struct {

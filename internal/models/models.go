@@ -25,6 +25,29 @@ type ResultBackend interface {
 type ResultSet interface {
 }
 
+// JobReq represents a job request.
+type JobReq struct {
+	TaskName string   `json:"task"`
+	JobID    string   `json:"job_id"`
+	Queue    string   `json:"queue"`
+	ETA      string   `json:"eta"`
+	Retries  int      `json:"retries"`
+	TTL      int      `json:"ttl"`
+	Args     []string `json:"args"`
+	DB       string   `json:"db"`
+
+	ttlDuration time.Duration
+}
+
+// JobResp is the response sent to a job request.
+type JobResp struct {
+	JobID    string     `json:"job_id"`
+	TaskName string     `json:"task"`
+	Queue    string     `json:"queue"`
+	ETA      *time.Time `json:"eta"`
+	Retries  int        `json:"retries"`
+}
+
 // JobStatusResp - sends the REST response as a JOB status response
 type JobStatusResp struct {
 	JobID string `json:"job_id"`
