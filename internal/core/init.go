@@ -66,7 +66,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 	for name, resDB := range resultPools {
 		opt := database.Opt{
 			DBType:         "postgres",
-			ResultTable:    fmt.Sprintf("results.%s.results_table", name),
+			ResultTable:    fmt.Sprintf("results.%s.results_table.%s", name,name),
 			UnloggedTables: true,
 		}
 
