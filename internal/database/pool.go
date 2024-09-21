@@ -54,3 +54,12 @@ func NewConn(cfg Config) (*sql.DB, error) {
 
 	return db, nil
 }
+
+// Get returns an *sql.DB instance from the database Pool
+func (p Pool) Get(dbName string) (*sql.DB, error) {
+	db, ok := p[dbName]
+	if !ok {
+		return nil, fmt.Errorf("could not find the database name : %s", dbName)
+	}
+	return db, nil
+}

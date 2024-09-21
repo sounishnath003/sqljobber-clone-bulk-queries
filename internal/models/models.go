@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 type Job struct {
 	ID     int    `json:"jobId"`
@@ -23,6 +26,12 @@ type ResultBackend interface {
 
 // ResultSet represents the set of results from an individual job that's executed.
 type ResultSet interface {
+	RegisterColTypes([]string, []*sql.ColumnType) error
+	IsColTypesRegistered() bool
+	WriteCols([]string) error
+	WriteRow([]interface{}) error
+	Flush() error
+	Close() error
 }
 
 // JobReq represents a job request.

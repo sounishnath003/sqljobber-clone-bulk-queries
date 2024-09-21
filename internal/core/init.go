@@ -43,7 +43,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 	// to fetch data from the the databases
 	srcPools, err := database.New(srcDBs)
 	if err != nil {
-		lo.Info("an error occured while connecting the source DBs", err)
+		lo.Info("an error occured while connecting the source DBs", slog.Attr{Key: "err"}, err)
 		return nil, err
 	}
 
@@ -57,7 +57,7 @@ func InitCore(conf ConfigOpts) (*Core, error) {
 
 	resultPools, err := database.New(resultDBs)
 	if err != nil {
-		lo.Info("an error occured while connecting the source DBs", err)
+		lo.Info("an error occured while connecting the source DBs", "err", err)
 		return nil, err
 	}
 
@@ -215,7 +215,7 @@ func (co *Core) execJob(jobID, taskName, dbName string, ttl time.Duration, args 
 
 	if task.Stmt != nil {
 		// Prepared query.
-		rows, err := task.Stmt.QueryContext(ctx, args...)
+		_, err := task.Stmt.QueryContext(ctx, args...)
 		if err != nil {
 			return 0, fmt.Errorf("query preparation failed: %w", err)
 		}
@@ -233,7 +233,7 @@ func (co *Core) execJob(jobID, taskName, dbName string, ttl time.Duration, args 
 		}
 	}
 
-	rows, err := db.QueryContext(ctx, task.Raw, args...)
+	rows, err = db.QueryContext(ctx, task.Raw, args...)
 	if err != nil {
 		if err == context.Canceled {
 			return 0, fmt.Errorf("job was cancelled : %w", err)
@@ -246,6 +246,69 @@ func (co *Core) execJob(jobID, taskName, dbName string, ttl time.Duration, args 
 
 	// Write the results into result backend.
 	return co.writeResults(jobID, task, ttl, rows)
+}
+
+// writeResults writes results from SQL query to a result backend
+func (co *Core) writeResults(jobID string, task Task, ttl time.Duration, rows *sql.Rows) (int64, error) {
+	var numRows int64
+
+	// Get the result backend.
+	name, backend := task.ResultBackends.GetRandom()
+	co.lo.Info("sending results from", "job_id", jobID, "name", name)
+	w, err := backend.NewResultSet(jobID, task.Name, ttl)
+	if err != nil {
+		return numRows, fmt.Errorf("error writing columns to result backend : %w", err)
+	}
+	defer w.Close()
+
+	// Get columns from results.
+	cols, err := rows.Columns()
+	if err != nil {
+		return numRows, err
+	}
+	numCols := len(cols)
+
+	// If the column types of this particular job result,
+	// is not being done, do it.
+	if !w.IsColTypesRegistered() {
+		colTypes, err := rows.ColumnTypes()
+		if err != nil {
+			return numRows, err
+		}
+		w.RegisterColTypes(cols, colTypes)
+	}
+
+	// Write results columns / headers.
+	if err := w.WriteCols(cols); err != nil {
+		return numRows, fmt.Errorf("error writing columns to result backend : %w", err)
+	}
+
+	var (
+		resCols     = make([]interface{}, numCols)
+		resPointers = make([]interface{}, numCols)
+	)
+
+	for i := 0; i < numCols; i++ {
+		resPointers[i] = &resCols[i]
+	}
+
+	// Scan each row and write to the results backend.
+	for rows.Next() {
+		if err := rows.Scan(resPointers...); err != nil {
+			return numRows, err
+		}
+		if err := w.WriteRow(resCols); err != nil {
+			return numRows, fmt.Errorf("error writing row to result backend: %v", err)
+		}
+
+		numRows++
+	}
+
+	if err := w.Flush(); err != nil {
+		return numRows, fmt.Errorf("error flushing results to result backend: %v", err)
+	}
+
+	return numRows, nil
 }
 
 // ----------- Tasks functionalities. -------------
@@ -329,13 +392,13 @@ func (co *Core) loadTasks(dir string) (Tasks, error) {
 			co.lo.Info("loading task:", name, "type", typ, "queue", queue, "details") // Added "details" as a final value
 
 			tasks[name] = Task{
-				Name:          name,
-				Queue:         queue,
-				Conc:          conc,
-				Stmt:          stmt,
-				Raw:           s.Query,
-				DBs:           srcDBs,
-				ResultBackend: resDBs,
+				Name:           name,
+				Queue:          queue,
+				Conc:           conc,
+				Stmt:           stmt,
+				Raw:            s.Query,
+				DBs:            srcDBs,
+				ResultBackends: resDBs,
 			}
 		}
 	}
@@ -353,7 +416,7 @@ func (co *Core) makeJob(j models.JobReq, taskName string) (tasqueue.Job, error) 
 
 	// Check if a JOB with same ID already running.
 	msg, err := co.q.GetJob(context.Background(), j.JobID)
-	if err != nil {
+	if err != nil && !errors.Is(err, tasqueue.ErrNotFound) {
 		return tasqueue.Job{}, fmt.Errorf("error fetching job status (id='%s')", j.JobID)
 	}
 	if msg.Status == tasqueue.StatusProcessing || msg.Status == tasqueue.StatusRetrying {
@@ -398,6 +461,12 @@ func (co *Core) makeJob(j models.JobReq, taskName string) (tasqueue.Job, error) 
 		args[i] = j.Args[i]
 	}
 
+	co.lo.Info("printing.creation.job", "taskmeta", taskMeta{
+		Args: args,
+		DB:   j.DB,
+		TTL:  int(ttl),
+	})
+
 	b, err := msgpack.Marshal(taskMeta{
 		Args: args,
 		DB:   j.DB,
@@ -436,6 +505,7 @@ func (co *Core) NewJob(j models.JobReq, taskName string) (models.JobResp, error)
 
 	// Create job.
 	uuid, err := co.q.Enqueue(context.Background(), sig)
+	co.lo.Info("uuid_generated", "uuid", uuid, "err", err)
 	if err != nil {
 		return models.JobResp{}, err
 	}

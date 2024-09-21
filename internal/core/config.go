@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"math/rand"
+
 	"github.com/kalbhor/tasqueue/v2"
 	"github.com/sounishnath003/jobprocessor/internal/database"
+	"github.com/sounishnath003/jobprocessor/internal/models"
 )
 
 type RedisBroker struct {
@@ -61,14 +64,34 @@ type Core struct {
 }
 
 type Task struct {
-	Name          string         `json:"name"`
-	Queue         string         `json:"queue"`
-	Conc          int            `json:"concurrency"`
-	Stmt          *sql.Stmt      `json:"-"`
-	Raw           string         `json:"raw,omitempty"`
-	DBs           database.Pool  `json:"-"`
-	ResultBackend ResultBackends `json:"-"`
+	Name           string         `json:"name"`
+	Queue          string         `json:"queue"`
+	Conc           int            `json:"concurrency"`
+	Stmt           *sql.Stmt      `json:"-"`
+	Raw            string         `json:"raw,omitempty"`
+	DBs            database.Pool  `json:"-"`
+	ResultBackends ResultBackends `json:"-"`
 }
 
 // Tasks represents a map of prepared SQL statements.
 type Tasks map[string]Task
+
+// GetRandom returns a random results backend from the map.
+func (r ResultBackends) GetRandom() (string, models.ResultBackend) {
+	stop := 0
+	if len(r) > 1 {
+		stop = rand.Intn(len(r))
+	}
+
+	i := 0
+	for name, v := range r {
+		if i == stop {
+			return name, v
+		}
+
+		i++
+	}
+
+	// This'll never happen.
+	return "", nil
+}
